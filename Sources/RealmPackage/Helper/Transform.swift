@@ -5,7 +5,6 @@
 //  Created by Ver on 2025/10/30.
 //
 
-// 希望在這實現Object和Struct的轉換
 import Foundation
 import RealmSwift
 

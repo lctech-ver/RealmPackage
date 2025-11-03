@@ -10,8 +10,7 @@ import RealmSwift
 import Foundation
 
 final class RealmService {
-    // MARK: GET
-    public func loadData(object: Object.Type, database: Realm, primaryKey: Any?) -> Result<Object, RealmError> {
+    public func loadObject(object: Object.Type, database: Realm, primaryKey: Any?) -> Result<Object, RealmError> {
         let loadedData = database.object(ofType: object, forPrimaryKey: primaryKey)
         guard let loadedData = loadedData else {
             return Result.failure(.empty)
@@ -19,31 +18,31 @@ final class RealmService {
         return Result.success(loadedData.freeze())
     }
     
-    public func loadList<T: Object>(object: T.Type, database: Realm, predicate: NSPredicate? = nil) -> Result<[T], RealmError> {
+    public func loadObjects<T: Object>(object: T.Type, database: Realm, predicate: NSPredicate? = nil) -> Result<[T], RealmError> {
         var loadedData = database.objects(object)
         if let predicate = predicate {
           loadedData = loadedData.filter(predicate)
         }
 
-        let frozenArray = Array(loadedData)
-        
         guard !loadedData.isEmpty else {
             return Result.failure(.empty)
         }
+        
+        let frozenArray = Array(loadedData).map { $0.freezeSafely() }
         return .success(frozenArray)
     }
 
     // MARK: CREATE
     @discardableResult
-    public func createObject<T: Object>(database: Realm, list: [T]) -> Result<[T], RealmError> {
+    public func createObject<T: Object>(database: Realm, list: [T]) -> Result<Void, RealmError> {
         do {
             try database.write {
                 database.add(list)
             }
             
-            return Result.success(list)
+            return Result.success(())
         } catch {
-            print("[RealmService] add data unsuccessful")
+            print("[RealmService] create object unsuccessful")
             return Result.failure(.databaseFail)
         }
     }
@@ -51,7 +50,7 @@ final class RealmService {
     
     // MARK: DELETE
     @discardableResult
-    public func deleteData<T: Object>(database: Realm, object: T) -> Bool {
+    public func deleteObject<T: Object>(database: Realm, object: T) -> Bool {
         do {
             try database.write {
                 database.delete(object)
@@ -63,7 +62,7 @@ final class RealmService {
     }
     
     @discardableResult
-    public func deleteList(database: Realm, objectType: Object.Type, predicate: NSPredicate? = nil) -> Bool {
+    public func deleteObjects(database: Realm, objectType: Object.Type, predicate: NSPredicate? = nil) -> Bool {
         do {
             try database.write {
                 var list = database.objects(objectType)
@@ -110,8 +109,8 @@ final class RealmService {
 
 extension RealmService {
     enum RealmError: Error {
-        case empty ///抓不到資料
-        case databaseFail ///操作資料庫時出現錯誤
+        case empty
+        case databaseFail
         case writedFailed
     }
     

@@ -9,7 +9,7 @@ import Foundation
 import Security
 import RealmSwift
 
-final class KeychainManager {
+public class KeychainManager {
     
     static let keyTag = "com.jktalk.realm.key"
     

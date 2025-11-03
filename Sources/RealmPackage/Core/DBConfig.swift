@@ -21,6 +21,7 @@ public actor RealmConfig {
     public init(
         baseName: String,
         objects: [ObjectBase.Type],
+        key: Data,
         deleteIfMigrationNeed: Bool,
         migrationProvider: RealmMigrationProvider? = nil
     ) {
@@ -29,6 +30,7 @@ public actor RealmConfig {
         
         var configuration = Realm.Configuration(
             fileURL: fileURL,
+            encryptionKey: key,
             schemaVersion: migrationProvider?.schemaVersion ?? 0,
             deleteRealmIfMigrationNeeded: deleteIfMigrationNeed,
             objectTypes: objects
@@ -50,7 +52,7 @@ extension RealmConfig {
     public func createObjects(data: [Object]) -> Bool {
         let result = service.createObject(database: realm, list: data)
         switch result {
-        case .success(let success):
+        case .success:
             print("[RealmService] create objects successful, create \(data.count) items")
             return true
         case .failure(let failure):
@@ -60,7 +62,7 @@ extension RealmConfig {
     }
     
     public func loadObjects<T: Object>(objectType: T, predicate: NSPredicate? = nil) -> [T] {
-        let result = service.loadList(object: T.self, database: realm, predicate: predicate)
+        let result = service.loadObjects(object: T.self, database: realm, predicate: predicate)
         
         switch result {
         case .success(let objects):
@@ -73,7 +75,7 @@ extension RealmConfig {
     
     @discardableResult
     public func deleteObjects(type: Object.Type, predicate: NSPredicate? = nil) -> Bool {
-        return service.deleteList(database: realm, objectType: type, predicate: predicate)
+        return service.deleteObjects(database: realm, objectType: type, predicate: predicate)
     }
     
     @discardableResult
