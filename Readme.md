@@ -1,13 +1,13 @@
 # RealmPackage
 
-輕量封裝的 Realm 服務層，提供安全且一致的資料庫操作（CRUD）、模型轉換工具，以及可選的資料庫加密與遷移支援。
+輕量封裝的 Realm 服務層，提供安全且一致的資料庫操作（CRUD）、模型轉換工具，以及可選的資料庫遷移支援。每次操作創建新的 Realm 實例，確保執行緒安全。
 
 ## 功能概要
 - 資料庫 CRUD：建立、查詢、更新、刪除皆以統一 API 進行。
 - 泛型更新：以 primaryKey 鎖定單筆資料，使用閉包安全更新欄位。
 - 結構互轉：`Object` 與純 Swift `struct` 透過協定與工具雙向轉換，並確保執行緒安全。
 - 遷移支援：自訂 `RealmMigrationProvider` 控制版本與遷移邏輯。
-- 加密支援：內建金鑰產生/保存，配置 `Realm.Configuration` 的 `encryptionKey`。
+- 執行緒安全：每次操作創建新的 `Realm` 實例，自動 freeze 返回物件，確保跨執行緒安全。
 
 ## 架構與檔案
 - Core
@@ -35,20 +35,10 @@ struct UserMigration: RealmMigrationProvider {
     }
 }
 
-// 產生或取得加密金鑰（使用 KeychainManager 或自訂）
-let encryptionKey: Data
-do {
-    encryptionKey = try KeychainManager.retrieveKey()
-} catch {
-    encryptionKey = try KeychainManager.generateKey()
-    try KeychainManager.storeKey(encryptionKey)
-}
-
-// 建立資料庫設定實例（RealmConfig 為 actor）
+// 建立資料庫設定實例（RealmConfig 為 final class）
 let db = RealmConfig(
     baseName: "example.realm",
     objects: [User.self],
-    key: encryptionKey,
     deleteIfMigrationNeed: false,
     migrationProvider: UserMigration()
 )
@@ -57,31 +47,30 @@ let db = RealmConfig(
 參數說明：
 - `baseName`：資料庫檔名（會存於 Documents 目錄）。
 - `objects`：要註冊進資料庫的 `Object` 類型陣列。
-- `key`：64 位元組的加密金鑰（`Data` 類型）。可使用 `KeychainManager` 產生與管理。
 - `deleteIfMigrationNeed`：若為 `true`，版本不相容時直接刪庫重建；若為 `false`，請提供 `migrationProvider` 並在其中處理遷移。
 - `migrationProvider`：自訂遷移提供者，定義 `schemaVersion` 與遷移邏輯。
 
 ## 基本用法（CRUD）
 ```swift
 // 建立多筆資料
-let created = await db.createObjects(data: [userObj1, userObj2])
+let created = db.createObjects(data: [userObj1, userObj2])
 
-// 讀取清單（可選 predicate 條件）
-let users: [UserObject] = await db.loadObjects(objectType: UserObject(), predicate: NSPredicate(value: true))
+// 讀取清單（可選 predicate 條件，使用 NSPredicate）
+let users: [UserObject] = db.loadObjects(objectType: UserObject.self, predicate: NSPredicate(value: true))
 
-// 刪除（可選 predicate 條件）
-let deleted = await db.deleteObjects(type: UserObject.self, predicate: nil)
+// 刪除（可選 predicate 條件，使用 String 格式）
+let deleted = db.deleteObjects(type: UserObject.self, predicate: nil)
 
 // 更新（使用 primaryKey + 閉包更新）
-let ok = await db.updateObject(type: UserObject.self, primaryKey: "123") { user in
+let ok = db.updateObject(type: UserObject.self, primaryKey: "123") { user in
     user.name = "John"
 }
 ```
 
 操作行為與錯誤：
 - `createObjects`：建立成功回傳 `true`，失敗回傳 `false`。返回的物件已加入 Realm 資料庫。
-- `loadObjects`：查詢成功回傳凍結的物件陣列（可安全跨執行緒使用），查無資料回傳空陣列。
-- `deleteObjects`：刪除成功回傳 `true`，失敗回傳 `false`。
+- `loadObjects`：查詢成功回傳凍結的物件陣列（可安全跨執行緒使用），查無資料回傳空陣列。參數使用 `objectType: T.Type`。
+- `deleteObjects`：刪除成功回傳 `true`，失敗回傳 `false`。predicate 參數使用 `String?` 格式（Realm 查詢字串）。
 - `updateObject`：若找不到指定 primaryKey 的物件，會回傳 `false` 並列印錯誤。內部以 `Realm.write { ... }` 包裝更新閉包，寫入失敗同樣回傳 `false`。
 
 ## 模型轉換（Object ↔ Model）
@@ -114,17 +103,17 @@ let objects: [UserObject] = Transform.modelsToObjects(models)
 - Model 轉 Object 回傳的是「未受管」物件，請在 `Realm.write { add(...) }` 內保存。
 
 ## 執行緒與安全性
-- `RealmConfig` 是 `actor`，建議以 `await` 呼叫其方法以確保協同安全。
-- `RealmService` 內部使用 Realm 的寫入交易管理；讀取操作（`loadObject`、`loadObjects`）會自動 freeze 物件，確保執行緒安全。
+- `RealmConfig` 是 `final class`，所有方法都是同步的，不需要 `await`。
+- 每次資料庫操作都會創建新的 `Realm` 實例，確保執行緒安全。
+- `RealmService` 內部使用 Realm 的寫入交易管理；讀取操作（`loadData`、`loadList`）會自動 freeze 物件，確保執行緒安全。
 - 所有從 `loadObjects` 回傳的物件都是凍結（frozen）狀態，可安全地跨執行緒使用。
-- `createObject` 不返回 managed objects，避免執行緒安全問題。
 
 ## 限制與注意事項
 - 更新 API 目前以 primaryKey 精準鎖定單筆資料；若需「批次條件更新」，可加一個以 `NSPredicate` 篩選後迭代更新的版本。
 - `objects: [ObjectBase.Type]` 必須包含所有欲儲存的 `Object` 類型。
 - 若設定 `deleteIfMigrationNeed = true`，版本不相容將直接刪庫；請僅在可接受資料重置的情境使用。
-- 加密金鑰必須為 64 位元組的 `Data`。建議使用 `KeychainManager` 產生與管理金鑰，確保金鑰安全存儲。若 App 重裝或 Keychain 清空，需能接受無法解密舊資料的風險（或自行備援）。
-- 所有資料庫操作都需要 `key` 參數，即使不使用加密也必須提供（可傳入空的 64 位元組 `Data`）。
+- `loadObjects` 的 `predicate` 參數使用 `NSPredicate?`，而 `deleteObjects` 的 `predicate` 參數使用 `String?`（Realm 查詢字串格式）。
+- 每次資料庫操作都會創建新的 `Realm` 實例，這確保了執行緒安全，但可能會有輕微的性能開銷。
 
 ## 錯誤處理
 - `RealmService.RealmError`：
@@ -136,46 +125,39 @@ let objects: [UserObject] = Transform.modelsToObjects(models)
 ```swift
 // 1) 準備 Object 與 Model 的對映（見上節）
 
-// 2) 產生或取得加密金鑰
-let encryptionKey: Data
-do {
-    encryptionKey = try KeychainManager.retrieveKey()
-} catch {
-    encryptionKey = try KeychainManager.generateKey()
-    try KeychainManager.storeKey(encryptionKey)
-}
-
-// 3) 初始化資料庫
+// 2) 初始化資料庫
 let db = RealmConfig(
     baseName: "example.realm",
     objects: [UserObject.self],
-    key: encryptionKey,
     deleteIfMigrationNeed: false,
     migrationProvider: UserMigration()
 )
 
-// 4) 寫入：Model -> Object -> add
+// 3) 寫入：Model -> Object -> add
 let m = User(name: "Alice")
 let o: UserObject = Transform.modelToObject(m)
-let created = await db.createObjects(data: [o])
+let created = db.createObjects(data: [o])
 
-// 5) 查詢 + 轉 Model
-let list: [UserObject] = await db.loadObjects(objectType: UserObject(), predicate: NSPredicate(value: true))
+// 4) 查詢 + 轉 Model
+let list: [UserObject] = db.loadObjects(objectType: UserObject.self, predicate: NSPredicate(value: true))
 let models: [User] = Transform.objectsToModels(list)
 
-// 6) 更新（以 primaryKey 鎖定）
-let success = await db.updateObject(type: UserObject.self, primaryKey: "alice-id") { user in
+// 5) 更新（以 primaryKey 鎖定）
+let success = db.updateObject(type: UserObject.self, primaryKey: "alice-id") { user in
     user.name = "Alice Chen"
 }
+
+// 6) 刪除（使用 String predicate）
+let deleted = db.deleteObjects(type: UserObject.self, predicate: "name == 'Alice'")
 ```
 
 ## 常見問題
 - 如何批次更新？
   - 建議先以 `loadObjects` 取得目標清單，再在單一 `write` 交易中逐筆更新；或新增一個 `update(objectsWhere:predicate:_:)` 的 API。
 - 如何避免跨執行緒存取錯誤？
-  - 本套件的 `loadObjects` 已自動 freeze 所有返回的物件，可安全跨執行緒使用。讀取物件時請使用本套件回傳的陣列，這些物件都是凍結狀態。
-- 如何產生加密金鑰？
-  - 使用 `KeychainManager.generateKey()` 產生 64 位元組的金鑰，並以 `KeychainManager.storeKey(_:)` 存儲到 Keychain。之後可用 `KeychainManager.retrieveKey()` 取回。
-- 是否必須使用加密？
-  - 必須提供 `key` 參數，但可以傳入空的 64 位元組 `Data` 來關閉加密（不建議用於生產環境）。
+  - 本套件的 `loadObjects` 已自動 freeze 所有返回的物件，可安全跨執行緒使用。讀取物件時請使用本套件回傳的陣列，這些物件都是凍結狀態。此外，每次操作都會創建新的 `Realm` 實例，確保執行緒隔離。
+- `loadObjects` 和 `deleteObjects` 的 predicate 參數為什麼不同？
+  - `loadObjects` 使用 `NSPredicate?` 以便於使用 Swift 的條件建構，而 `deleteObjects` 使用 `String?` 以支援 Realm 的查詢字串格式（如 `"name == 'John'"`）。
+- 為什麼 `RealmConfig` 不再是 `actor`？
+  - 改為 `final class` 並在每次操作時創建新的 `Realm` 實例，這樣可以確保執行緒安全，同時簡化 API（不需要 `await`）。
 

@@ -13,36 +13,34 @@ public protocol RealmMigrationProvider: Sendable {
     func migrate(migration: Migration, oldSchemaVersion: UInt64)
 }
 
-public actor RealmConfig {
-    private var realm: Realm
-    
+public final class RealmConfig {
     private var service: RealmService = RealmService()
     
-    public init(
-        baseName: String,
-        objects: [ObjectBase.Type],
-        key: Data,
-        deleteIfMigrationNeed: Bool,
-        migrationProvider: RealmMigrationProvider? = nil
-    ) {
+    private var config: Realm.Configuration
+    
+    public init(baseName: String,
+                objects: [ObjectBase.Type],
+                deleteIfMigrationNeed: Bool,
+                migrationProvider: RealmMigrationProvider? = nil) {
         let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(baseName)
         
-        var configuration = Realm.Configuration(
+        self.config = Realm.Configuration(
             fileURL: fileURL,
-            encryptionKey: key,
             schemaVersion: migrationProvider?.schemaVersion ?? 0,
             deleteRealmIfMigrationNeeded: deleteIfMigrationNeed,
             objectTypes: objects
         )
         
         if !deleteIfMigrationNeed, let provider = migrationProvider {
-            configuration.migrationBlock = { migration, oldSchemaVersion in
+            config.migrationBlock = { migration, oldSchemaVersion in
                 provider.migrate(migration: migration, oldSchemaVersion: oldSchemaVersion)
             }
         }
-        
-        self.realm = try! Realm(configuration: configuration)
+    }
+    
+    private func createRealm() -> Realm {
+        return try! Realm(configuration: config)
     }
 }
 
@@ -50,6 +48,8 @@ public actor RealmConfig {
 extension RealmConfig {
     @discardableResult
     public func createObjects(data: [Object]) -> Bool {
+        let realm = self.createRealm()
+        
         let result = service.createObject(database: realm, list: data)
         switch result {
         case .success:
@@ -61,8 +61,10 @@ extension RealmConfig {
         }
     }
     
-    public func loadObjects<T: Object>(objectType: T, predicate: NSPredicate? = nil) -> [T] {
-        let result = service.loadObjects(object: T.self, database: realm, predicate: predicate)
+    public func loadObjects<T: Object>(objectType: T.Type, predicate: NSPredicate? = nil) -> [T] {
+        let realm = self.createRealm()
+        
+        let result = service.loadList(object: T.self, database: realm, predicate: predicate)
         
         switch result {
         case .success(let objects):
@@ -74,12 +76,14 @@ extension RealmConfig {
     }
     
     @discardableResult
-    public func deleteObjects(type: Object.Type, predicate: NSPredicate? = nil) -> Bool {
-        return service.deleteObjects(database: realm, objectType: type, predicate: predicate)
+    public func deleteObjects(type: Object.Type, predicate: String? = nil) -> Bool {
+        let realm = self.createRealm()
+        return service.deleteList(database: realm, objectType: type, predicate: predicate)
     }
     
     @discardableResult
     public func updateObject<T: Object>(type: T.Type, primaryKey: Any, _ update: (T) -> Void) -> Bool {
+        let realm = self.createRealm()
         let result = service.updateObject(
             ofType: type,
             database: realm,

@@ -9,7 +9,7 @@ actor AuthStore {
     
     init() {
         initializationTask = Task {
-            await self.loadAuthTokens()
+            self.loadAuthTokens()
             await self.setInitialized()
         }
     }
@@ -29,14 +29,14 @@ actor AuthStore {
         return tokens
     }
     
-    internal func createAuth(auth: Auth) async {
+    internal func createAuth(auth: Auth) {
         let object: AuthObject = Transform.modelToObject(auth)
-        await DBService.shared.authDB.createObjects(data: [object])
-        await loadAuthTokens()
+        DBService.shared.authDB.createObjects(data: [object])
+        loadAuthTokens()
     }
     
-    internal func loadAuthTokens() async {
-        let authObjects = await DBService.shared.authDB.loadObjects(objectType: AuthObject())
+    internal func loadAuthTokens() {
+        let authObjects = DBService.shared.authDB.loadObjects(objectType: AuthObject.self)
         let auths = authObjects.map { $0.toModel() }
         
         if !auths.isEmpty {
@@ -44,10 +44,9 @@ actor AuthStore {
         }
     }
     
-    internal func updateAuth(authToken: String? = nil, accessToken: String? = nil, talkToken: String? = nil)
-    async {
-        let success = await DBService.shared.authDB.updateObject(type: AuthObject.self,
-                                                                  primaryKey: self.tokens.huid)
+    internal func updateAuth(authToken: String? = nil, accessToken: String? = nil, talkToken: String? = nil) {
+        let success = DBService.shared.authDB.updateObject(type: AuthObject.self,
+                                                            primaryKey: self.tokens.huid)
         { object in
             if let accessToken = accessToken {
                 object.accessToken = accessToken
@@ -77,7 +76,7 @@ actor AuthStore {
         }
     }
 
-    internal func deleteAuth() async {
-        await DBService.shared.authDB.deleteObjects(type: AuthObject.self)
+    internal func deleteAuth() {
+        DBService.shared.authDB.deleteObjects(type: AuthObject.self)
     }
 }
